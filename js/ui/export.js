@@ -26,5 +26,7 @@ export function downloadText(filename, text, mime) {
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  // Let the browser start consuming the Blob URL before releasing it. Revoking
+  // synchronously can cancel downloads in browsers that dispatch them later.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
