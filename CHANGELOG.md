@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Defer Blob URL cleanup after exporting JSON or Markdown so the browser can begin the download reliably.
+
 ## 0.1.0 - 2026-10-10
 
 - First release: local Unity, Unreal Engine, and Godot shader-log triage.
