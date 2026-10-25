@@ -1,6 +1,7 @@
 import { parseLog } from './core/parser.js';
 import { buildReport } from './core/report.js';
 import { MAX_BYTES, assertWithinLimit, bytesIn, formatMiB } from './core/indexer.js';
+import { createLatestTask } from './core/latest-task.js';
 import { downloadText, toMarkdown } from './ui/export.js';
 import { filterFindings, renderFindings, renderSummary } from './ui/render.js';
 import { demoLog } from './demo-log.js';
@@ -18,6 +19,34 @@ const emptyResults = document.querySelector('#empty-results');
 const reportSource = document.querySelector('#report-source');
 let report = null;
 let sourceName = 'pasted-log';
+const analysisTask = createLatestTask(
+  ({ result, name }) => {
+    report = result;
+    sourceName = name;
+    renderSummary(summary, report);
+    reportSource.textContent = `${sourceName} · ${formatMiB(report.bytes)} MiB · ${report.totalLines} lines`;
+    results.hidden = false;
+    refreshFindings();
+    setStatus(`${report.occurrences} diagnostic lines grouped into ${report.groups} findings.`, 'success');
+  },
+  (error) => {
+    report = null;
+    results.hidden = true;
+    setStatus(error.message || 'The log could not be analyzed.', 'error');
+  },
+);
+const fileTask = createLatestTask(
+  ({ text, name }) => {
+    analysisTask.invalidate();
+    report = null;
+    results.hidden = true;
+    input.value = text;
+    sourceName = name;
+    updateByteCount();
+    setStatus('Log loaded locally. Select Analyze log to review it.', 'success');
+  },
+  () => setStatus('The selected file could not be read as text.', 'error'),
+);
 
 function setStatus(message, kind = 'neutral') {
   status.textContent = message;
@@ -43,29 +72,27 @@ function refreshFindings() {
 }
 
 async function analyze(text = input.value, name = sourceName) {
-  try {
+  setStatus('Analyzing locally…');
+  await analysisTask.run(async () => {
     assertWithinLimit(text);
-    setStatus('Analyzing locally…');
     const parsed = await parseLog(text);
-    report = await buildReport(parsed);
-    sourceName = name;
-    renderSummary(summary, report);
-    reportSource.textContent = `${sourceName} · ${formatMiB(report.bytes)} MiB · ${report.totalLines} lines`;
-    results.hidden = false;
-    refreshFindings();
-    setStatus(`${report.occurrences} diagnostic lines grouped into ${report.groups} findings.`, 'success');
-  } catch (error) {
-    report = null;
-    results.hidden = true;
-    setStatus(error.message || 'The log could not be analyzed.', 'error');
-  }
+    return { result: await buildReport(parsed), name };
+  });
 }
 
-input.addEventListener('input', updateByteCount);
+input.addEventListener('input', () => {
+  analysisTask.invalidate();
+  report = null;
+  results.hidden = true;
+  updateByteCount();
+});
 document.querySelector('#analyze-button').addEventListener('click', () => analyze());
 document.querySelector('#demo-button').addEventListener('click', () => {
+  fileTask.invalidate();
   input.value = demoLog;
   sourceName = 'built-in-sample.log';
+  report = null;
+  results.hidden = true;
   updateByteCount();
   analyze(demoLog, sourceName);
 });
@@ -76,34 +103,35 @@ for (const selector of ['#search-input', '#engine-filter', '#severity-filter']) 
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files?.[0];
   if (!file) return;
+  fileInput.value = '';
   if (file.size > MAX_BYTES) {
+    fileTask.invalidate();
+    analysisTask.invalidate();
     setStatus(`This file is ${formatMiB(file.size)} MiB; the limit is 20 MiB. Choose a smaller log.`, 'error');
-    fileInput.value = '';
     return;
   }
-  try {
-    input.value = await file.text();
-    sourceName = file.name;
-    updateByteCount();
-    setStatus('Log loaded locally. Select Analyze log to review it.', 'success');
-  } catch {
-    setStatus('The selected file could not be read as text.', 'error');
-  }
+  analysisTask.invalidate();
+  report = null;
+  results.hidden = true;
+  setStatus('Reading the selected log locally…');
+  void fileTask.run(async () => ({ text: await file.text(), name: file.name }));
 });
 for (const eventName of ['dragenter', 'dragover']) dropzone.addEventListener(eventName, (event) => { event.preventDefault(); dropzone.classList.add('dropzone-active'); });
 for (const eventName of ['dragleave', 'drop']) dropzone.addEventListener(eventName, (event) => { event.preventDefault(); dropzone.classList.remove('dropzone-active'); });
 dropzone.addEventListener('drop', async (event) => {
   const file = event.dataTransfer?.files?.[0];
   if (!file) return;
-  if (file.size > MAX_BYTES) { setStatus(`This file is ${formatMiB(file.size)} MiB; the limit is 20 MiB. Choose a smaller log.`, 'error'); return; }
-  try {
-    input.value = await file.text();
-    sourceName = file.name;
-    updateByteCount();
-    setStatus('Log loaded locally. Select Analyze log to review it.', 'success');
-  } catch {
-    setStatus('The dropped file could not be read as text.', 'error');
+  if (file.size > MAX_BYTES) {
+    fileTask.invalidate();
+    analysisTask.invalidate();
+    setStatus(`This file is ${formatMiB(file.size)} MiB; the limit is 20 MiB. Choose a smaller log.`, 'error');
+    return;
   }
+  analysisTask.invalidate();
+  report = null;
+  results.hidden = true;
+  setStatus('Reading the selected log locally…');
+  void fileTask.run(async () => ({ text: await file.text(), name: file.name }));
 });
 document.querySelector('#export-json').addEventListener('click', () => {
   if (report) downloadText('shadertriage-report.json', `${JSON.stringify(report, null, 2)}\n`, 'application/json');

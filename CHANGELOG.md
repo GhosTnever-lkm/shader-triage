@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- Ignore stale asynchronous file reads and analyses when a newer input is selected or edited.
+- Clear an old report as soon as a new file starts loading.
+- Add deterministic latest-task regression tests.
+
 ## 0.1.1
 
 - Defer Blob URL cleanup after exporting JSON or Markdown so the browser can begin the download reliably.
